@@ -6,8 +6,8 @@ Neovim integration for [Herdr](https://herdr.dev).
 Allows seamless tmux-style window navigation between Neovim windows and Herdr panes using standard Ctrl+h/j/k/l bindings.
 
 ## Stack & Architecture
-- **Rust helper (`herdr-navigator`)**: A standalone Rust binary compiled from `src/main.rs`. Implements CLI commands (`register`, `release`, `focus`, `split`, `dispatch`) to query, record, and dispatch navigation to Herdr panes.
-- **Neovim Plugin**: Written in Lua, located in `lua/herdr/` and `plugin/`. It manages Neovim window movement, registers/releases current Neovim pane presence cache in `~/.cache/herdr.nvim/` (using autocommands), and defers to the Rust helper if Neovim cannot navigate inside itself.
+- **Rust helper (`herdr-navigator`)**: A standalone Rust binary compiled from `src/main.rs`. Implements CLI commands (`register`, `release`, `focus`, `split`, `dispatch`) to query and dispatch navigation to Herdr panes.
+- **Neovim Plugin**: Written in Lua, located in `lua/herdr/` and `plugin/`. It manages Neovim window movement, writes per-pane marker files to `~/.cache/herdr.nvim/panes/` (using autocommands), and defers to the Rust helper if Neovim cannot navigate inside itself.
 
 ## Setup, Build & Run Commands
 - Build Rust helper: `cargo build --release`
@@ -38,6 +38,7 @@ Allows seamless tmux-style window navigation between Neovim windows and Herdr pa
   ```
 
 ## Project Conventions & Quirks
-- Neovim pane registrations are temporary. The helper leverages Herdr's agent focus API internally as a temporary focus shim, then releases that marker immediately.
+- Neovim pane detection uses per-pane marker files (`~/.cache/herdr.nvim/panes/{pane_id}`), not Herdr's agent API. Stale markers are pruned against Herdr's live `pane.list` at dispatch time.
+- The helper leverages Herdr's agent focus API internally as a temporary focus shim (since Herdr has no direct `pane.focus` API), then releases that marker immediately.
 - The helper stores layouts and registers in local `~/.cache/herdr.nvim/` cache to avoid waiting for Herdr's debounced JSON saves.
 - Prevent bracketed paste issue by utilizing `pane.send_text` in the helper.

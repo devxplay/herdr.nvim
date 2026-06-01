@@ -6,8 +6,6 @@ local config = {
 	register_on_start = true,
 }
 
-local missing_helper_notified = false
-
 local directions = {
 	left = { key = "<C-h>", cmd = "HerdrNavigateLeft", wincmd = "h" },
 	down = { key = "<C-j>", cmd = "HerdrNavigateDown", wincmd = "j" },
@@ -71,7 +69,6 @@ local function compile_helper(callback)
 			compiling = false
 			if obj.code == 0 then
 				vim.notify("herdr.nvim: herdr-navigator built successfully", vim.log.levels.INFO)
-				missing_helper_notified = false
 				local calls = pending_calls
 				pending_calls = {}
 				for _, cb in ipairs(calls) do
@@ -106,12 +103,40 @@ local function run_helper(args)
 	end
 end
 
+local function pane_id()
+	return vim.env.HERDR_ACTIVE_PANE_ID or vim.env.HERDR_PANE_ID
+end
+
+local function nvim_panes_dir()
+	local base = vim.env.XDG_CACHE_HOME or (vim.env.HOME .. "/.cache")
+	return base .. "/herdr.nvim/panes"
+end
+
 function M.register()
-	run_helper({ "register" })
+	if not in_herdr() then
+		return
+	end
+	local id = pane_id()
+	if not id or id == "" then
+		return
+	end
+	local dir = nvim_panes_dir()
+	vim.fn.mkdir(dir, "p")
+	local f = io.open(dir .. "/" .. id, "w")
+	if f then
+		f:close()
+	end
 end
 
 function M.release()
-	run_helper({ "release" })
+	if not in_herdr() then
+		return
+	end
+	local id = pane_id()
+	if not id or id == "" then
+		return
+	end
+	os.remove(nvim_panes_dir() .. "/" .. id)
 end
 
 function M.navigate(direction)

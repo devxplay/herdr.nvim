@@ -13,9 +13,9 @@ The first feature is tmux-style navigation between Neovim windows and Herdr pane
 
 Herdr does not currently expose tmux-style process-aware key forwarding. `herdr.nvim` works around that with two pieces:
 
-1. The Neovim plugin records the current Herdr pane in a local `~/.cache/herdr.nvim/` presence cache while Neovim is open.
+1. The Neovim plugin writes a per-pane marker file under `~/.cache/herdr.nvim/panes/` while Neovim is open. This is a plain empty file named after the Herdr pane ID — no JSON, no shared state, no races.
 2. The Rust `herdr-navigator` helper is bound in Herdr. When `Ctrl+h/j/k/l` is pressed:
-   - if the active pane is recorded as a Neovim pane, it forwards the key into Neovim;
+   - if the active pane has a marker file, it forwards the key into Neovim;
    - otherwise it moves focus to the adjacent Herdr pane.
 
 When Neovim receives the key, it first moves between Neovim windows. If there is no Neovim window in that direction, it asks Herdr to focus the adjacent Herdr pane.
@@ -23,6 +23,8 @@ When Neovim receives the key, it first moves between Neovim windows. If there is
 The helper forwards control keys with Herdr's raw `pane.send_text` API. This avoids bracketed paste, which would make Neovim try to insert text into buffers like `NvimTree`.
 
 The helper can also own split bindings and keeps a short live layout cache under `~/.cache/herdr.nvim/`. This avoids waiting for Herdr's debounced `session.json` save before pane navigation knows about a new split.
+
+Stale marker files (from crashed Neovim instances) are pruned automatically by checking against Herdr's live `pane.list` at dispatch time.
 
 The plugin builds the Rust helper automatically on install/update (via `build.lua` for lazy.nvim, or on-demand at runtime for other package managers). For a manual checkout, build it yourself:
 
@@ -32,7 +34,7 @@ cargo build --release
 
 The Neovim plugin uses `target/release/herdr-navigator` by default. Override `helper` in setup only if you install the binary somewhere else.
 
-Neovim panes are not reported as persistent Herdr agents. The helper only uses Herdr's agent focus API internally as a temporary focus shim, then releases that marker immediately.
+Neovim pane registration uses simple marker files, not Herdr's agent API. The helper only uses Herdr's agent focus API internally as a temporary focus shim (since Herdr has no direct `pane.focus` API), then releases that marker immediately.
 
 ## Coexistence with vim-tmux-navigator
 

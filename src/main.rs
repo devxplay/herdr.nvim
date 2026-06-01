@@ -8,9 +8,7 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const SOURCE_PRESENCE: &str = "herdr.nvim:presence";
 const SOURCE_FOCUS: &str = "herdr.nvim:navigator";
-const AGENT_PRESENCE: &str = "herdr.nvim";
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
 struct Rect {
@@ -28,8 +26,6 @@ struct LayoutCache {
     internal_aliases: HashMap<String, String>,
     #[serde(default)]
     max_internal: i64,
-    #[serde(default)]
-    nvim_panes: HashMap<String, u128>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -74,6 +70,13 @@ fn cache_path() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .unwrap_or(home_dir()?.join(".cache"));
     Ok(base.join("herdr.nvim").join("layout-cache.json"))
+}
+
+fn nvim_panes_dir() -> Result<PathBuf, String> {
+    let base = env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or(home_dir()?.join(".cache"));
+    Ok(base.join("herdr.nvim").join("panes"))
 }
 
 fn load_cache() -> LayoutCache {
@@ -608,12 +611,17 @@ fn focus_adjacent(direction: &str, current_pane_id: Option<String>) -> Result<i3
     Ok(0)
 }
 
-fn prune_nvim_panes(cache: &mut LayoutCache, live_public_panes: &HashSet<String>) -> bool {
-    let before = cache.nvim_panes.len();
-    cache
-        .nvim_panes
-        .retain(|pane_id, _| live_public_panes.contains(pane_id));
-    cache.nvim_panes.len() != before
+fn prune_nvim_markers(dir: &std::path::Path, live_public_panes: &HashSet<String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if let Some(name) = entry.file_name().to_str() {
+            if !live_public_panes.contains(name) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
 }
 
 fn pane_is_registered_nvim(pane_id: &str) -> Result<bool, String> {
@@ -622,17 +630,20 @@ fn pane_is_registered_nvim(pane_id: &str) -> Result<bool, String> {
         return Ok(false);
     };
 
+    let dir = nvim_panes_dir()?;
+    if !dir.join(&public_pane_id).exists() {
+        return Ok(false);
+    }
+
     let panes = pane_list()?;
     let live_public_panes = panes
         .iter()
         .filter_map(|pane| pane.get("pane_id").and_then(Value::as_str))
         .map(str::to_string)
         .collect::<HashSet<_>>();
-    if prune_nvim_panes(&mut cache, &live_public_panes) {
-        save_cache(&cache)?;
-    }
+    prune_nvim_markers(&dir, &live_public_panes);
 
-    Ok(cache.nvim_panes.contains_key(&public_pane_id))
+    Ok(dir.join(&public_pane_id).exists())
 }
 
 fn ctrl_text(direction: &str) -> Option<&'static str> {
@@ -762,7 +773,10 @@ fn register() -> Result<i32, String> {
     let Some(public_pane_id) = resolve_public_pane_id(&pane_id, &mut cache)? else {
         return Ok(1);
     };
-    cache.nvim_panes.insert(public_pane_id, now_ns());
+    let dir = nvim_panes_dir()?;
+    fs::create_dir_all(&dir).map_err(|err| format!("failed to create {}: {err}", dir.display()))?;
+    fs::write(dir.join(&public_pane_id), b"")
+        .map_err(|err| format!("failed to write marker for {public_pane_id}: {err}"))?;
     save_cache(&cache)?;
     Ok(0)
 }
@@ -775,43 +789,10 @@ fn release() -> Result<i32, String> {
     let Some(public_pane_id) = resolve_public_pane_id(&pane_id, &mut cache)? else {
         return Ok(1);
     };
-    cache.nvim_panes.remove(&public_pane_id);
-    save_cache(&cache)?;
-    Ok(0)
-}
-
-fn cleanup_agents() -> Result<i32, String> {
-    let agents = result("agent.list", json!({}))?;
-    let Some(agents) = agents.get("agents").and_then(Value::as_array) else {
-        return Ok(0);
-    };
-
-    let mut cache = load_cache();
-    let mut changed = false;
-    let seq = now_ns();
-    for (index, agent) in agents.iter().enumerate() {
-        if agent.get("agent").and_then(Value::as_str) != Some(AGENT_PRESENCE) {
-            continue;
-        }
-        let Some(pane_id) = agent.get("pane_id").and_then(Value::as_str) else {
-            continue;
-        };
-
-        cache.nvim_panes.insert(pane_id.to_string(), now_ns());
-        changed = true;
-        result(
-            "pane.release_agent",
-            json!({
-                "pane_id": pane_id,
-                "source": SOURCE_PRESENCE,
-                "agent": AGENT_PRESENCE,
-                "seq": seq + index as u128,
-            }),
-        )?;
-    }
-
-    if changed {
-        save_cache(&cache)?;
+    let dir = nvim_panes_dir()?;
+    let marker = dir.join(&public_pane_id);
+    if marker.exists() {
+        let _ = fs::remove_file(&marker);
     }
     Ok(0)
 }
@@ -830,9 +811,7 @@ fn dispatch(direction: &str) -> Result<i32, String> {
 }
 
 fn usage() {
-    eprintln!(
-        "usage: herdr-navigator dispatch|focus|register|release|split|cleanup-agents [left|down|up|right]"
-    );
+    eprintln!("usage: herdr-navigator dispatch|focus|register|release|split [left|down|up|right]");
 }
 
 fn run() -> Result<i32, String> {
@@ -846,7 +825,6 @@ fn run() -> Result<i32, String> {
     match (command, direction) {
         ("register", _) => register(),
         ("release", _) => release(),
-        ("cleanup-agents", _) => cleanup_agents(),
         ("focus", Some(direction)) if ctrl_text(direction).is_some() => {
             focus_adjacent(direction, None)
         }
