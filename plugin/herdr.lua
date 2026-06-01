@@ -1,6 +1,5 @@
 if vim.g.loaded_herdr_nvim == 1 then
-  return
+	return
 end
 
 vim.g.loaded_herdr_nvim = 1
-
