@@ -31,6 +31,60 @@ local function in_herdr()
 	return vim.env.HERDR_ENV == "1" or vim.env.HERDR_SOCKET_PATH ~= nil
 end
 
+local function in_tmux()
+	return vim.env.TMUX ~= nil and vim.env.TMUX ~= ""
+end
+
+local function has_tmux_navigator()
+	return vim.fn.exists(":TmuxNavigateLeft") == 2
+end
+
+local tmux_commands = {
+	left = "TmuxNavigateLeft",
+	down = "TmuxNavigateDown",
+	up = "TmuxNavigateUp",
+	right = "TmuxNavigateRight",
+}
+
+local compiling = false
+local pending_calls = {}
+
+local function compile_helper(callback)
+	if compiling then
+		if callback then
+			table.insert(pending_calls, callback)
+		end
+		return
+	end
+	compiling = true
+	if callback then
+		table.insert(pending_calls, callback)
+	end
+
+	vim.notify("herdr.nvim: building herdr-navigator...", vim.log.levels.INFO)
+
+	local cmd = { "cargo", "build", "--release" }
+	local root = plugin_root()
+
+	vim.system(cmd, { cwd = root }, function(obj)
+		vim.schedule(function()
+			compiling = false
+			if obj.code == 0 then
+				vim.notify("herdr.nvim: herdr-navigator built successfully", vim.log.levels.INFO)
+				missing_helper_notified = false
+				local calls = pending_calls
+				pending_calls = {}
+				for _, cb in ipairs(calls) do
+					pcall(cb)
+				end
+			else
+				vim.notify("herdr.nvim: failed to build herdr-navigator\n" .. (obj.stderr or ""), vim.log.levels.ERROR)
+				pending_calls = {}
+			end
+		end)
+	end)
+end
+
 local function run_helper(args)
 	if not in_herdr() then
 		return
@@ -38,10 +92,9 @@ local function run_helper(args)
 
 	local helper = helper_path()
 	if vim.fn.executable(helper) ~= 1 then
-		if not missing_helper_notified then
-			vim.notify("herdr.nvim helper is not executable: " .. helper, vim.log.levels.WARN)
-			missing_helper_notified = true
-		end
+		compile_helper(function()
+			run_helper(args)
+		end)
 		return
 	end
 
@@ -73,7 +126,11 @@ function M.navigate(direction)
 		return
 	end
 
-	run_helper({ "focus", direction })
+	if in_herdr() then
+		run_helper({ "focus", direction })
+	elseif in_tmux() and has_tmux_navigator() then
+		vim.cmd(tmux_commands[direction])
+	end
 end
 
 function M.setup(opts)
@@ -89,13 +146,17 @@ function M.setup(opts)
 	vim.api.nvim_create_user_command("HerdrReleasePane", M.release, {})
 
 	if config.set_keymaps then
+		-- Suppress vim-tmux-navigator's own keymaps since herdr.nvim takes
+		-- over Ctrl+h/j/k/l and delegates to TmuxNavigate* when appropriate.
+		vim.g.tmux_navigator_no_mappings = 1
+
 		for direction, spec in pairs(directions) do
 			vim.keymap.set("n", spec.key, function()
 				M.navigate(direction)
-			end, { silent = true, desc = "Navigate " .. direction .. " with Herdr" })
+			end, { silent = true, desc = "Navigate " .. direction })
 			vim.keymap.set("t", spec.key, "<C-\\><C-n><cmd>" .. spec.cmd .. "<cr>", {
 				silent = true,
-				desc = "Navigate " .. direction .. " with Herdr",
+				desc = "Navigate " .. direction,
 			})
 		end
 	end
