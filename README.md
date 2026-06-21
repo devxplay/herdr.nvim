@@ -60,11 +60,48 @@ return {
 
 ## Lazy.nvim
 
+### Basic setup
+
 ```lua
 {
   "devxplay/herdr.nvim",
 }
 ```
+
+### LazyVim / NvChad / Distro compatibility
+
+LazyVim and similar Neovim distributions set default `Ctrl+h/j/k/l` keymaps for window navigation that load after plugins. To ensure herdr.nvim's keymaps take precedence, use this configuration:
+
+```lua
+{
+  "devxplay/herdr.nvim",
+  lazy = false,
+  priority = 1000,
+  config = function()
+    require("herdr").setup({
+      set_keymaps = false, -- We'll set them after LazyVim loads
+    })
+    
+    -- Set keymaps after LazyVim's defaults
+    vim.api.nvim_create_autocmd("VimEnter", {
+      callback = function()
+        vim.defer_fn(function()
+          vim.keymap.set("n", "<C-h>", function() require("herdr.navigator").navigate("left") end, { desc = "Navigate left" })
+          vim.keymap.set("n", "<C-j>", function() require("herdr.navigator").navigate("down") end, { desc = "Navigate down" })
+          vim.keymap.set("n", "<C-k>", function() require("herdr.navigator").navigate("up") end, { desc = "Navigate up" })
+          vim.keymap.set("n", "<C-l>", function() require("herdr.navigator").navigate("right") end, { desc = "Navigate right" })
+        end, 100)
+      end,
+    })
+  end,
+}
+```
+
+This configuration:
+- Loads the plugin immediately (`lazy = false`)
+- Loads early with high priority (`priority = 1000`)
+- Waits for Neovim to finish starting, then sets the keymaps after a short delay
+- Ensures herdr.nvim's navigation keymaps override the distribution's defaults
 
 ## Herdr config
 
