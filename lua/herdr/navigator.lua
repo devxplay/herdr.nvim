@@ -104,7 +104,21 @@ local function run_helper(args)
 end
 
 local function pane_id()
-	return vim.env.HERDR_ACTIVE_PANE_ID or vim.env.HERDR_PANE_ID
+	local id = vim.env.HERDR_ACTIVE_PANE_ID or vim.env.HERDR_PANE_ID
+	if id and id ~= "" then
+		return id
+	end
+
+	local handle = io.popen("herdr pane current 2>/dev/null")
+	if handle then
+		local result = handle:read("*a")
+		handle:close()
+		local json = vim.json and vim.json.decode(result) or vim.fn.json_decode(result)
+		if json and json.result and json.result.pane then
+			return json.result.pane.pane_id
+		end
+	end
+	return nil
 end
 
 local function nvim_panes_dir()
