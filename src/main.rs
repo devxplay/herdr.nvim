@@ -673,25 +673,25 @@ fn pane_is_registered_nvim(pane_id: &str) -> Result<bool, String> {
     Ok(dir.join(&public_pane_id).exists())
 }
 
-fn ctrl_text(direction: &str) -> Option<&'static str> {
+fn ctrl_key(direction: &str) -> Option<&'static str> {
     match direction {
-        "left" => Some("\u{0008}"),
-        "down" => Some("\u{000a}"),
-        "up" => Some("\u{000b}"),
-        "right" => Some("\u{000c}"),
+        "left" => Some("ctrl+h"),
+        "down" => Some("ctrl+j"),
+        "up" => Some("ctrl+k"),
+        "right" => Some("ctrl+l"),
         _ => None,
     }
 }
 
 fn send_ctrl_to_pane(pane_id: &str, direction: &str) -> Result<(), String> {
-    let Some(text) = ctrl_text(direction) else {
+    let Some(key) = ctrl_key(direction) else {
         return Err(format!("unsupported direction {direction}"));
     };
     result(
-        "pane.send_text",
+        "pane.send_keys",
         json!({
             "pane_id": pane_id,
-            "text": text,
+            "keys": [key],
         }),
     )?;
     Ok(())
@@ -852,13 +852,13 @@ fn run() -> Result<i32, String> {
     match (command, direction) {
         ("register", _) => register(),
         ("release", _) => release(),
-        ("focus", Some(direction)) if ctrl_text(direction).is_some() => {
+        ("focus", Some(direction)) if ctrl_key(direction).is_some() => {
             focus_adjacent(direction, None)
         }
         ("split", Some(direction)) if matches!(direction, "right" | "down") => {
             split_pane(direction)
         }
-        ("dispatch", Some(direction)) if ctrl_text(direction).is_some() => dispatch(direction),
+        ("dispatch", Some(direction)) if ctrl_key(direction).is_some() => dispatch(direction),
         _ => {
             usage();
             Ok(2)
