@@ -205,15 +205,20 @@ fn active_workspace_and_tab() -> Result<(Value, Value), String> {
     Ok((workspace, tab))
 }
 
-fn pane_public_mapping(workspace: &Value, tab: &Value) -> Result<BTreeMap<i64, String>, String> {
+fn pane_public_mapping(workspace: &Value, _tab: &Value) -> Result<BTreeMap<i64, String>, String> {
     let workspace_id = workspace
         .get("id")
         .and_then(Value::as_str)
         .ok_or_else(|| "active Herdr workspace has no id".to_string())?;
-    let panes = tab
+    let panes = _tab
         .get("panes")
         .and_then(Value::as_object)
         .ok_or_else(|| "active Herdr tab has no panes object".to_string())?;
+
+    let public_pane_numbers = workspace
+        .get("public_pane_numbers")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "active Herdr workspace has no public_pane_numbers".to_string())?;
 
     let mut internal_ids = panes
         .keys()
@@ -223,8 +228,13 @@ fn pane_public_mapping(workspace: &Value, tab: &Value) -> Result<BTreeMap<i64, S
 
     Ok(internal_ids
         .into_iter()
-        .enumerate()
-        .map(|(index, internal_id)| (internal_id, format!("{workspace_id}-{}", index + 1)))
+        .map(|internal_id| {
+            let public_number = public_pane_numbers
+                .get(&internal_id.to_string())
+                .and_then(Value::as_u64)
+                .unwrap_or(internal_id as u64 + 1);
+            (internal_id, format!("{workspace_id}:p{public_number}"))
+        })
         .collect())
 }
 
@@ -433,6 +443,17 @@ fn adjacent_public(
     candidates.first().map(|candidate| candidate.2.clone())
 }
 
+fn focus_pane_direction(pane_id: &str, direction: &str) -> Result<(), String> {
+    result(
+        "pane.focus_direction",
+        json!({
+            "pane_id": pane_id,
+            "direction": direction,
+        }),
+    )?;
+    Ok(())
+}
+
 fn focus_pane(pane_id: &str) -> Result<(), String> {
     let seq = now_ns();
     let normalized = pane_id.replace(['-', ':'], "_");
@@ -578,6 +599,12 @@ fn focus_adjacent(direction: &str, current_pane_id: Option<String>) -> Result<i3
         return Ok(1);
     };
 
+    // Try the new pane.focus_direction API first (herdr 0.7.0+)
+    if focus_pane_direction(&current_pane_id, direction).is_ok() {
+        return Ok(0);
+    }
+
+    // Fall back to computed approach for older herdr versions
     if let Some(target_public) = cached_adjacent(direction, &current_pane_id)? {
         focus_pane(&target_public)?;
         return Ok(0);
